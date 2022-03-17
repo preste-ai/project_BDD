@@ -1,133 +1,118 @@
-import os
-import tarfile
-from PIL import Image
-from tqdm import tqdm
-import urllib.request
-import random
-import torch
+"""
+This is an example data loader for pytorch which uses the datatool API to load the datatool output JSON and read samples.
+The example task prepares a transform function of the images and segmentation masks into 300x300 png images and offers
+a getitem function to load one image, associated annotations information, and associated masks if the image is a defect
+image.
+
+Input:
+The input is a datatool output directory containing the dataset.json and samples directory
+
+"""
+
 from torch.utils.data import Dataset
 from torchvision import transforms as T
+from PIL import Image
+import os
+import sys
+import inspect
+import random
 
+cur_path = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+sys.path.insert(0, os.path.join(cur_path, '..'))
+from datatool_api.config.APIConfig import DTAPIConfig
+from datatool_api.models.DTDataset import DTDataset
+from custom_dataset_model import DTDatasetCustom
 
-URL = 'ftp://guest:GU.205dldo@ftp.softronics.ch/mvtec_anomaly_detection/mvtec_anomaly_detection.tar.xz'
 CLASS_NAMES = ['bottle', 'cable', 'capsule', 'carpet', 'grid',
                'hazelnut', 'leather', 'metal_nut', 'pill', 'screw',
-               'tile', 'toothbrush', 'transistor', 'wood', 'zipper',
-               'dagm_c1', 'dagm_c2', 'dagm_c3', 'dagm_c4', 'dagm_c5', 'dagm_c6', 'kolectorsdd2_train']
+               'tile', 'toothbrush', 'transistor', 'wood', 'zipper']
 
 
 class MVTecDataset(Dataset):
-    def __init__(self, root_path='../data', class_names_list=['bottle'], is_train=True,
-                 resize=256, cropsize=224):
+    def __init__(self, root_path: str, class_names_list=['bottle'], is_train=True,
+                 resize=256, cropsize=224, operating_mode: str = 'memory'):
+        """
+        Instantiate the dataset instance
+
+        :param data_dir: Directory containing the datatool output which contains the "sample_files" directory and
+        "dataset.json" file
+        :param operating_mode: Operating mode for the datatool api to handle the dataset, based on the data size,
+        user can choose [memory, disk or ramdisk]
+
+        """
         for class_name in class_names_list:
             assert class_name in CLASS_NAMES, 'class_name: {}, should be in {}'.format(class_name, CLASS_NAMES)
 
-        self.root_path = root_path
+        Dataset.__init__(self)
+        self.data_dir = root_path
+        self.operating_mode = operating_mode
+        # self.kwargs = kwargs
         self.class_names_list = class_names_list
         self.is_train = is_train
         self.resize = resize
         self.cropsize = cropsize
-        self.mvtec_folder_path = os.path.join(root_path, 'mvtech_cleaned')
 
-        # download dataset if not exist
-        # self.download()
+        # No need to validate when loading back the API output
+        DTAPIConfig.disable_validation()
+        # Load the dataset.json using the datatool API
+        self.dataset = DTDatasetCustom(name='input_dataset',
+                                       operatingMode=self.operating_mode).load_from_json(os.path.join(self.data_dir,
+                                                                                                      'dataset.json'),
+                                                                                         element_list=['images',
+                                                                                                       'counters',
+                                                                                                       'annotations'])
 
-        # load dataset
-        # self.x, self.y, self.mask = self.load_dataset_folder()
-        self.x, self.y = self.load_dataset_folder()
-
-        # set transforms
+        # Example Transform to resize and normalize the images: Modify it to write a more complex transform
+        # self.transform = transforms.Compose([transforms.Resize(self.kwargs['model_input_size']),
+        #                                     transforms.ToTensor(),
+        #                                     transforms.Normalize(mean=self.kwargs['normalization']['mean'],
+        #                                                          std=self.kwargs['normalization']['std'])])
         self.transform_x = T.Compose([T.Resize(resize, Image.ANTIALIAS),
-                                      #T.CenterCrop(cropsize),
+                                      # T.CenterCrop(cropsize),
                                       T.ToTensor()])
-                                      #T.Normalize(mean=[0.485, 0.456, 0.406],
-                                      #            std=[0.229, 0.224, 0.225])])
+        # T.Normalize(mean=[0.485, 0.456, 0.406],
+        #            std=[0.229, 0.224, 0.225])])
         self.transform_mask = T.Compose([T.Resize(resize, Image.NEAREST),
-                                         #T.CenterCrop(cropsize),
+                                         # T.CenterCrop(cropsize),
                                          T.ToTensor()])
 
-    def __getitem__(self, idx):
-        # x, y, mask = self.x[idx], self.y[idx], self.mask[idx]
-        x, y = self.x[idx], self.y[idx]
+        self.custom_index_list_class_based_good = []
+        self.custom_index_list_class_based_defect = []
+        self.custom_index_list_class_based = []
+        i = 0
+        while i < self.dataset.counters.imagesCounter:
+            if self.dataset.annotations.get(str(i)).objectCategory == 'good' and self.dataset.annotations.get(
+                    str(i)).objectType in self.class_names_list:
+                self.custom_index_list_class_based_good.append(i)
+                self.custom_index_list_class_based.append(i)
+            elif self.dataset.annotations.get(str(i)).objectCategory == 'defect' and self.dataset.annotations.get(
+                    str(i)).objectType in self.class_names_list:
+                self.custom_index_list_class_based_defect.append(i)
+                self.custom_index_list_class_based.append(i)
 
-        x = Image.open(x).convert('RGB')
-        x = self.transform_x(x)
-
-        # if y == 0:
-        #     mask = torch.zeros([1, self.cropsize, self.cropsize])
-        # else:
-        #     mask = Image.open(mask)
-        #     mask = self.transform_mask(mask)
-
-        return x, y  #, mask
+        # Add any extra needed variables here
+        # TODO - Implemented by the datatool creator
 
     def __len__(self):
-        return len(self.x)
+        # TODO - Implemented by the datatool creator
+        return len(self.custom_index_list_class_based)
 
-    def load_dataset_folder(self):
-        phase = 'train' if self.is_train else 'test'
-        x, y = [], []
-
-        for class_name in self.class_names_list:
-            img_dir = os.path.join(self.mvtec_folder_path, class_name, phase)
-            # gt_dir = os.path.join(self.mvtec_folder_path, class_name, 'ground_truth')
-
-            img_types = sorted(os.listdir(img_dir))
-            for img_type in img_types:
-
-                # load images
-                img_type_dir = os.path.join(img_dir, img_type)
-                if not os.path.isdir(img_type_dir):
-                    continue
-                img_fpath_list = sorted([os.path.join(img_type_dir, f)
-                                         for f in os.listdir(img_type_dir)
-                                         if f.endswith('.png')])
-                x.extend(img_fpath_list)
-
-                # load gt labels
-                if img_type == 'good':
-                    y.extend([0] * len(img_fpath_list))
-                    # mask.extend([None] * len(img_fpath_list))
-                else:
-                    y.extend([1] * len(img_fpath_list))
-                    # gt_type_dir = os.path.join(gt_dir, img_type)
-                    img_fname_list = [os.path.splitext(os.path.basename(f))[0] for f in img_fpath_list]
-                    # gt_fpath_list = [os.path.join(gt_type_dir, img_fname + '_mask.png')
-                    #                  for img_fname in img_fname_list]
-                    # mask.extend(gt_fpath_list)
-
-        assert len(x) == len(y), 'number of x and y should be same'
-
-        return list(x), list(y) #  , list(mask)
-
-    def download(self):
-        """Download dataset if not exist"""
-
-        if not os.path.exists(self.mvtec_folder_path):
-            tar_file_path = self.mvtec_folder_path + '.tar.xz'
-            if not os.path.exists(tar_file_path):
-                download_url(URL, tar_file_path)
-            print('unzip downloaded dataset: %s' % tar_file_path)
-            tar = tarfile.open(tar_file_path, 'r:xz')
-            tar.extractall(self.mvtec_folder_path)
-            tar.close()
-
-        return
+    def __getitem__(self, index):
+        # Return
+        image_name = self.dataset.images.get(str(self.custom_index_list_class_based[index])).id + '.png'
+        img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name))
+        img = self.transform(img)
+        if self.dataset.annotations.get(str(self.custom_index_list_class_based[index])).objectCategory == 'good':
+            #           return img, self.dataset.annotations.get(index)
+            return img, 0
+        else:
+            # segmask_name = self.dataset.annotations.get(index).id + '_mask.png'
+            # segmask = Image.open(os.path.join(self.data_dir, 'sample_files', segmask_name ))
+            # segmask = self.transform(segmask)
+            return img, 1
 
 
-class DownloadProgressBar(tqdm):
-    def update_to(self, b=1, bsize=1, tsize=None):
-        if tsize is not None:
-            self.total = tsize
-        self.update(b * bsize - self.n)
-
-
-def download_url(url, output_path):
-    with DownloadProgressBar(unit='B', unit_scale=True, miniters=1, desc=url.split('/')[-1]) as t:
-        urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
-
-
-class BDDDataset(Dataset):
+class BDDataset(Dataset):
     def __init__(self,
                  root_path='../data',
                  bdd_folder_path='mvtec',
@@ -137,7 +122,7 @@ class BDDDataset(Dataset):
                  cropsize=224,
                  ways=2,
                  shots=3,
-                 query=5):
+                 query=5, operating_mode: str = 'memory'):
 
         for class_name in class_names_list:
             assert class_name in CLASS_NAMES, 'class_name: {}, should be in {}'.format(class_name, CLASS_NAMES)
@@ -152,73 +137,92 @@ class BDDDataset(Dataset):
         self.shots = shots
         self.query = query
 
-        # load dataset
-        self.x_0, self.y_0, self.x_1, self.y_1 = self.load_dataset_folder()
-        assert len(self.y_1) > self.shots + self.query
-        assert len(self.y_0) > 0
-        # set transforms
+        DTAPIConfig.disable_validation()
+        # Load the dataset.json using the datatool API
+        self.dataset = DTDatasetCustom(name='input_dataset',
+                                       operatingMode=self.operating_mode).load_from_json(os.path.join(self.data_dir,
+                                                                                                      'dataset.json'),
+                                                                                         element_list=['images',
+                                                                                                       'counters',
+                                                                                                       'annotations'])
+
         self.transform_x = T.Compose([T.Resize(resize, Image.ANTIALIAS),
+                                      # T.CenterCrop(cropsize),
                                       T.ToTensor()])
-                                    # T.Normalize(mean=[0.485, 0.456, 0.406],
-                                    #            std=[0.229, 0.224, 0.225])])
+        # T.Normalize(mean=[0.485, 0.456, 0.406],
+        #            std=[0.229, 0.224, 0.225])])
         self.transform_mask = T.Compose([T.Resize(resize, Image.NEAREST),
+                                         # T.CenterCrop(cropsize),
                                          T.ToTensor()])
+
+        self.custom_index_list_class_based_good = []
+        self.custom_index_list_class_based_defect = []
+        self.custom_index_list_class_based = []
+        i = 0
+        while i < self.dataset.counters.imagesCounter:
+            if self.dataset.annotations.get(str(i)).objectCategory == 'good' and self.dataset.annotations.get(
+                    str(i)).objectType in self.class_names_list:
+                self.custom_index_list_class_based_good.append(i)
+                self.custom_index_list_class_based.append(i)
+            elif self.dataset.annotations.get(str(i)).objectCategory == 'defect' and self.dataset.annotations.get(
+                    str(i)).objectType in self.class_names_list:
+                self.custom_index_list_class_based_defect.append(i)
+                self.custom_index_list_class_based.append(i)
+
+        assert len(self.custom_index_list_class_based_good) > 0
+        assert len(self.custom_index_list_class_based_defect) > self.shots + self.query
+
+    def __len__(self):
+        # TODO - Implemented by the datatool creator
+        return len(self.custom_index_list_class_based)
 
     def __getitem__(self, idx):
         batch_x, batch_y = [], []
 
-        # defects
+        # defect
         for i in range((self.shots + self.query)):
-            x, y = self.x_1[idx * (self.shots + self.query) + i], self.y_1[idx * (self.shots + self.query) + i]
-            x = Image.open(x).convert('RGB')
-            x = self.transform_x(x)
+            image_name = self.dataset.images.get(
+                str(self.custom_index_list_class_based_defect[idx * (self.shots + self.query) + i])).id + '.png'
+            img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name))
+            img = self.transform(img)
 
-            batch_x.append(x)
-            batch_y.append(y)
+            batch_x.append(img)
+            batch_y.append(1)
 
         # good
         for _ in range((self.shots + self.query)):
-            rand_i = random.randint(0, len(self.y_0) - 1)
-            x, y = self.x_0[rand_i], self.y_0[rand_i]
-            x = Image.open(x).convert('RGB')
-            x = self.transform_x(x)
-            batch_x.append(x)
-            batch_y.append(y)
+            rand_i = random.randint(0, len(self.custom_index_list_class_based_good))
+            image_name = self.dataset.images.get(str(self.custom_index_list_class_based_defect[rand_i])).id + '.png'
+            img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name))
+            img = self.transform(img)
+
+            batch_x.append(img)
+            batch_y.append(0)
 
         return torch.stack(batch_x), torch.tensor(batch_y)
 
-    def __len__(self):
-        return len(self.y_1) // (self.shots + self.query)
 
-    def load_dataset_folder(self):
-        # phase = 'train' if self.is_train else 'test'
-        phase = 'test'  # if self.is_train else 'test'
-        x_0, x_1, y_0, y_1 = [], [], [], []
+def main():
+    params = {
+        'image_type': 'RGB',  # Image type that the model is going to take as input, in this case it is
+        # 3 channel RGB
+        'model_input_size': (256, 256),  # Width x Height of input tensor for the model
+        # 'min_landmark_count': 17,  # Min no of 2d landmarks which must be present for a subject to include it
+        # in loading candidate list
+        'normalization': {  # Normalization parameters for image
+            'mean': [154.78, 118.57, 101.74],
+            'std': [53.80, 48.19, 46.15]
+        }
+    }
 
-        for class_name in self.class_names_list:
-            img_dir = os.path.join(self.dataset_folder_path, class_name, phase)
-            img_types = sorted(os.listdir(img_dir))
+    # TODO: Set by the user
+    data_dir = '<Input directory containing the samples and dataset.json>'
 
-            for img_type in img_types:
+    # Create dataset instance
+    dataset = MVTecDataset(data_dir=data_dir, operating_mode='memory', **params)
+    for i in range(len(dataset)):
+        print(dataset.__getitem__(i))
 
-                # load images
-                img_type_dir = os.path.join(img_dir, img_type)
-                if not os.path.isdir(img_type_dir):
-                    continue
-                img_fpath_list = sorted([os.path.join(img_type_dir, f)
-                                         for f in os.listdir(img_type_dir)
-                                         if f.endswith('.png')])
 
-                # load gt labels
-                if img_type == 'good':
-                    x_0.extend(img_fpath_list)
-                    y_0.extend([0] * len(img_fpath_list))
-                else:
-                    x_1.extend(img_fpath_list)
-                    y_1.extend([1] * len(img_fpath_list))
-
-        assert len(x_0) == len(y_0), 'number of x and y should be same'
-        assert len(x_1) == len(y_1), 'number of x and y should be same'
-
-        return list(x_0), list(y_0), list(x_1), list(y_1)
-
+if __name__ == main():
+    main()
