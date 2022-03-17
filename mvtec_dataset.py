@@ -100,7 +100,7 @@ class MVTecDataset(Dataset):
     def __getitem__(self, index):
         # Return
         image_name = self.dataset.images.get(str(self.custom_index_list_class_based[index])).id + '.png'
-        img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name))
+        img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name)).convert('RGB')
         img = self.transform(img)
         if self.dataset.annotations.get(str(self.custom_index_list_class_based[index])).objectCategory == 'good':
             #           return img, self.dataset.annotations.get(index)
@@ -183,7 +183,7 @@ class BDDataset(Dataset):
         for i in range((self.shots + self.query)):
             image_name = self.dataset.images.get(
                 str(self.custom_index_list_class_based_defect[idx * (self.shots + self.query) + i])).id + '.png'
-            img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name))
+            img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name)).convert('RGB')
             img = self.transform(img)
 
             batch_x.append(img)
@@ -193,7 +193,7 @@ class BDDataset(Dataset):
         for _ in range((self.shots + self.query)):
             rand_i = random.randint(0, len(self.custom_index_list_class_based_good))
             image_name = self.dataset.images.get(str(self.custom_index_list_class_based_defect[rand_i])).id + '.png'
-            img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name))
+            img = Image.open(os.path.join(self.data_dir, 'sample_files', image_name)).convert('RGB')
             img = self.transform(img)
 
             batch_x.append(img)
