@@ -8,12 +8,12 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms as T
 
-
 URL = 'ftp://guest:GU.205dldo@ftp.softronics.ch/mvtec_anomaly_detection/mvtec_anomaly_detection.tar.xz'
 CLASS_NAMES = ['bottle', 'cable', 'capsule', 'carpet', 'grid',
                'hazelnut', 'leather', 'metal_nut', 'pill', 'screw',
                'tile', 'toothbrush', 'transistor', 'wood', 'zipper',
-               'dagm_c1', 'dagm_c2', 'dagm_c3', 'dagm_c4', 'dagm_c5', 'dagm_c6', 'kolectorsdd2_train']
+               'dagm_c1', 'dagm_c2', 'dagm_c3', 'dagm_c4', 'dagm_c5', 'dagm_c6', 'kolectorsdd2_train',
+               'kolectorsdd2_test']
 
 
 class MVTecDataset(Dataset):
@@ -38,12 +38,12 @@ class MVTecDataset(Dataset):
 
         # set transforms
         self.transform_x = T.Compose([T.Resize(resize, Image.ANTIALIAS),
-                                      #T.CenterCrop(cropsize),
+                                      # T.CenterCrop(cropsize),
                                       T.ToTensor()])
-                                      #T.Normalize(mean=[0.485, 0.456, 0.406],
-                                      #            std=[0.229, 0.224, 0.225])])
+        # T.Normalize(mean=[0.485, 0.456, 0.406],
+        #            std=[0.229, 0.224, 0.225])])
         self.transform_mask = T.Compose([T.Resize(resize, Image.NEAREST),
-                                         #T.CenterCrop(cropsize),
+                                         # T.CenterCrop(cropsize),
                                          T.ToTensor()])
 
     def __getitem__(self, idx):
@@ -59,7 +59,7 @@ class MVTecDataset(Dataset):
         #     mask = Image.open(mask)
         #     mask = self.transform_mask(mask)
 
-        return x, y  #, mask
+        return x, y  # , mask
 
     def __len__(self):
         return len(self.x)
@@ -98,7 +98,7 @@ class MVTecDataset(Dataset):
 
         assert len(x) == len(y), 'number of x and y should be same'
 
-        return list(x), list(y) #  , list(mask)
+        return list(x), list(y)  # , list(mask)
 
     def download(self):
         """Download dataset if not exist"""
@@ -141,7 +141,7 @@ class BDDDataset(Dataset):
 
         for class_name in class_names_list:
             assert class_name in CLASS_NAMES, 'class_name: {}, should be in {}'.format(class_name, CLASS_NAMES)
-
+        random.seed(42)
         self.root_path = root_path
         self.class_names_list = class_names_list
         self.is_train = is_train
@@ -154,13 +154,15 @@ class BDDDataset(Dataset):
 
         # load dataset
         self.x_0, self.y_0, self.x_1, self.y_1 = self.load_dataset_folder()
+        # print('self.y_0', len(self.y_0))
+        # print('self.y_1', len(self.y_1))
         assert len(self.y_1) > self.shots + self.query
         assert len(self.y_0) > 0
         # set transforms
         self.transform_x = T.Compose([T.Resize(resize, Image.ANTIALIAS),
                                       T.ToTensor()])
-                                    # T.Normalize(mean=[0.485, 0.456, 0.406],
-                                    #            std=[0.229, 0.224, 0.225])])
+        # T.Normalize(mean=[0.485, 0.456, 0.406],
+        #            std=[0.229, 0.224, 0.225])])
         self.transform_mask = T.Compose([T.Resize(resize, Image.NEAREST),
                                          T.ToTensor()])
 
@@ -222,3 +224,148 @@ class BDDDataset(Dataset):
 
         return list(x_0), list(y_0), list(x_1), list(y_1)
 
+
+class BDDDatasetv2(Dataset):
+    def __init__(self,
+                 root_path='../data',
+                 bdd_folder_path='mvtec',
+                 class_names_list=['bottle'],
+                 is_train=True,
+                 resize=256,
+                 cropsize=224,
+                 ways=2,
+                 shots=3,
+                 query=5):
+
+        for class_name in class_names_list:
+            assert class_name in CLASS_NAMES, 'class_name: {}, should be in {}'.format(class_name, CLASS_NAMES)
+
+        self.root_path = root_path
+        self.class_names_list = class_names_list
+        self.is_train = is_train
+        self.resize = resize
+        self.cropsize = cropsize
+        self.dataset_folder_path = os.path.join(root_path, bdd_folder_path)
+        self.ways = ways
+        self.shots = shots
+        self.query = query
+
+        # load dataset
+        # query data
+        self.x, self.y = self.load_dataset_folder()
+        # support data
+        self.s_x_0, self.s_y_0, self.s_x_1, self.s_y_1 = self.load_support_folder()
+
+        assert len(self.y) >= self.query
+
+        assert len(self.s_y_1) >= self.shots // 2
+        assert len(self.s_y_0) >= self.shots // 2
+
+        # set transforms
+        self.transform_x = T.Compose([T.Resize(resize, Image.ANTIALIAS),
+                                      T.ToTensor()])
+        # T.Normalize(mean=[0.485, 0.456, 0.406],
+        #            std=[0.229, 0.224, 0.225])])
+        self.transform_mask = T.Compose([T.Resize(resize, Image.NEAREST),
+                                         T.ToTensor()])
+
+    def __getitem__(self, idx):
+        # query data
+        batch_x, batch_y = [], []
+        # support data
+        batch_s_x, batch_s_y = [], []
+
+        ## QUERY
+
+        for i in range(self.query * self.ways):
+            x, y = self.x[idx * self.query * self.ways + i], self.y[idx * self.query * self.ways + i]
+            x = Image.open(x).convert('RGB')
+            x = self.transform_x(x)
+
+            batch_x.append(x)
+            batch_y.append(y)
+
+        ## SUPPORT
+        # defects
+        for _ in range(self.shots):
+            rand_i = random.randint(0, len(self.s_y_1) - 1)
+            x, y = self.s_x_1[rand_i], self.s_y_1[rand_i]
+            x = Image.open(x).convert('RGB')
+            x = self.transform_x(x)
+
+            batch_s_x.append(x)
+            batch_s_y.append(y)
+
+        # good
+        for _ in range(self.shots):
+            rand_i = random.randint(0, len(self.s_y_0) - 1)
+            x, y = self.s_x_0[rand_i], self.s_y_0[rand_i]
+            x = Image.open(x).convert('RGB')
+            x = self.transform_x(x)
+            batch_s_x.append(x)
+            batch_s_y.append(y)
+
+        return torch.stack(batch_x), torch.tensor(batch_y), torch.stack(batch_s_x), torch.tensor(batch_s_y)
+
+    def __len__(self):
+        return len(self.y) // (self.query * self.ways)
+
+    def load_dataset_folder(self, phase='test'):
+
+        x, y = [], []
+
+        for class_name in self.class_names_list:
+            img_dir = os.path.join(self.dataset_folder_path, class_name, phase)
+            img_types = sorted(os.listdir(img_dir))
+
+            for img_type in img_types:
+
+                # load images
+                img_type_dir = os.path.join(img_dir, img_type)
+                if not os.path.isdir(img_type_dir):
+                    continue
+                img_fpath_list = sorted([os.path.join(img_type_dir, f)
+                                         for f in os.listdir(img_type_dir)
+                                         if f.endswith('.png')])
+
+                # load gt labels
+                if img_type == 'good':
+                    x.extend(img_fpath_list)
+                    y.extend([0] * len(img_fpath_list))
+                else:
+                    x.extend(img_fpath_list)
+                    y.extend([1] * len(img_fpath_list))
+
+        assert len(x) == len(y)
+        return list(x), list(y)
+
+    def load_support_folder(self, phase='support_set'):
+
+        x_0, x_1, y_0, y_1 = [], [], [], []
+
+        for class_name in self.class_names_list:
+            img_dir = os.path.join(self.dataset_folder_path, class_name, phase)
+            img_types = sorted(os.listdir(img_dir))
+
+            for img_type in img_types:
+
+                # load images
+                img_type_dir = os.path.join(img_dir, img_type)
+                if not os.path.isdir(img_type_dir):
+                    continue
+                img_fpath_list = sorted([os.path.join(img_type_dir, f)
+                                         for f in os.listdir(img_type_dir)
+                                         if f.endswith('.png')])
+
+                # load gt labels
+                if img_type == 'good':
+                    x_0.extend(img_fpath_list)
+                    y_0.extend([0] * len(img_fpath_list))
+                else:
+                    x_1.extend(img_fpath_list)
+                    y_1.extend([1] * len(img_fpath_list))
+
+        assert len(x_0) == len(y_0), 'number of x and y should be same'
+        assert len(x_1) == len(y_1), 'number of x and y should be same'
+
+        return list(x_0), list(y_0), list(x_1), list(y_1)
