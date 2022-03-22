@@ -50,7 +50,7 @@ def fast_adapt(model, batch, ways, shot, query_num, metric=None, device=None):
     labels = labels.squeeze(0)[sort.indices].squeeze(0)
 
     # Compute support and query embeddings
-    _, embeddings = model(data)
+    embeddings = model(data)
     support_indices = np.zeros(data.size(0), dtype=bool)
     selection = np.arange(ways) * (shot + query_num)
     for offset in range(shot):
@@ -127,7 +127,7 @@ def fast_adaptv3(model, batch, ways, shot, query_num, metric=None, device=None):
 
     # Compute support and query embeddings
     support, support_f = model(s_data)
-    support = support_f.reshape(ways, shot, -1).mean(dim=1)
+    support_f = support_f.reshape(ways, shot, -1).mean(dim=1)
     query, query_f = model(data)
     labels = labels.long()
 
@@ -136,6 +136,55 @@ def fast_adaptv3(model, batch, ways, shot, query_num, metric=None, device=None):
     # loss = F.binary_cross_entropy(torch.tensor(torch.argmax(logits, dim=1), dtype=torch.float32, requires_grad=True), labels.float())
 
     out_mask_sm = torch.softmax(support, dim=1)
+
+    segment_loss = loss_focal(out_mask_sm, s_mask)
+
+    acc = accuracy(logits, labels)
+
+    return loss + segment_loss, acc
+
+
+def fast_adapt_train(model, batch, ways, shot, query_num, metric=None, device=None):
+    if metric is None:
+        metric = pairwise_distances_logits
+    if device is None:
+        device = model.device()
+    loss_focal = FocalLoss()
+
+    data, labels, mask = batch
+
+    data = data.to(device)
+    labels = labels.to(device)
+    mask = mask.to(device)
+
+    # Sort data samples by labels
+    # TODO: Can this be replaced by ConsecutiveLabels ?
+    sort = torch.sort(labels)
+    data = data.squeeze(0)[sort.indices].squeeze(0)
+    labels = labels.squeeze(0)[sort.indices].squeeze(0)
+    mask = mask.squeeze(0)[sort.indices].squeeze(0)
+
+    # Compute support and query embeddings
+    embeddings_mask, embeddings = model(data)
+    support_indices = np.zeros(data.size(0), dtype=bool)
+    selection = np.arange(ways) * (shot + query_num)
+    for offset in range(shot):
+        support_indices[selection + offset] = True
+    query_indices = torch.from_numpy(~support_indices)
+    support_indices = torch.from_numpy(support_indices)
+    support = embeddings[support_indices]
+    support_mask = embeddings_mask[support_indices]
+    s_mask = mask[support_indices]
+    support = support.reshape(ways, shot, -1).mean(dim=1)
+    query = embeddings[query_indices]
+    labels = labels[query_indices].long()
+
+    logits = pairwise_distances_logits(query, support)
+    # print('logits->', logits)
+    loss = F.cross_entropy(logits, labels)
+    # loss = F.binary_cross_entropy(torch.tensor(torch.argmax(logits, dim=1), dtype=torch.float32, requires_grad=True), labels.float())
+
+    out_mask_sm = torch.softmax(support_mask, dim=1)
 
     segment_loss = loss_focal(out_mask_sm, s_mask)
 

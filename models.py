@@ -101,7 +101,7 @@ class SegNet(nn.Module):
 
 class SegNetv3(nn.Module):
     def __init__(self, reconstruct, seg):
-        super(SegNet, self).__init__()
+        super(SegNetv3, self).__init__()
         self.reconstruct = reconstruct
         self.seg = seg
 

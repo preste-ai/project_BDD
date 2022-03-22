@@ -7,9 +7,8 @@ from torch.utils.data import DataLoader
 import os
 from DRAEM.model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
 from models import ProtoNet, SegNetv3
-from mvtec_dataset import MVTecDataset, BDDDatasetv2, BDDDatasetv3
-from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv2, fast_adaptv3
-
+from mvtec_dataset import BDDDataset, BDDDatasetv3
+from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv3, fast_adapt_train
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -33,7 +32,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--checkpoint-save-freq', type=int, default=25)
 
-    parser.add_argument('--gpu', default=0)
+    parser.add_argument('--gpu', default=1)
 
     args = parser.parse_args()
     print(args)
@@ -68,8 +67,14 @@ if __name__ == '__main__':
     # train_classes_names = ['wood', 'capsule', 'dagm_c2', 'carpet', 'grid',
     #                                 'hazelnut', 'zipper', 'dagm_c1', 'dagm_c3', 'dagm_c5', 'kolectorsdd2_train']
 
-    raw_train_ds_list = [MVTecDataset(root_path='data', class_names_list=[class_n], is_train=False, resize=(256, 256))
-                         for class_n in train_classes_names]
+    raw_train_ds_list = [BDDDataset(root_path='data',
+                                    bdd_folder_path='mvtech_cleaned',
+                                    class_names_list=[class_n],
+                                    is_train=False,
+                                    resize=(256, 256),
+                                    ways=args.test_way,
+                                    shots=args.test_shot,
+                                    query=args.test_query) for class_n in train_classes_names]
 
     val_classes_names = ['bottle', 'cable']
     # val_classes_names = ['dagm_c3']
@@ -95,12 +100,12 @@ if __name__ == '__main__':
                                      shots=args.test_shot,
                                      query=args.test_query) for class_n in test_classes_names]
 
-    train_taskset_list = [prepare_task_sets(ds, args.train_query, args.train_way, args.shot) for ds in
-                          raw_train_ds_list]  # l2l.data.TaskDataset(dataset_train, transforms_train)
+    # train_taskset_list = [prepare_task_sets(ds, args.train_query, args.train_way, args.shot) for ds in
+    #                      raw_train_ds_list]  # l2l.data.TaskDataset(dataset_train, transforms_train)
     # val_taskset_list = [prepare_task_sets(ds, args.test_query, args.test_way, args.test_shot) for ds in raw_val_ds_list]     # l2l.data.TaskDataset(dataset_val, transforms_val)
     # test_taskset_list = [prepare_task_sets(ds, args.test_query, args.test_way, args.test_shot) for ds in raw_test_ds_list]   # l2l.data.TaskDataset(dataset_test, transforms_test)
 
-    train_loader_list = [DataLoader(task, pin_memory=True, shuffle=True) for task in train_taskset_list]
+    train_loader_list = [DataLoader(task, pin_memory=True, shuffle=True) for task in raw_train_ds_list]
     val_loader_list = [DataLoader(task, pin_memory=True, shuffle=True) for task in raw_val_ds_list]
     test_loader_list = [DataLoader(task, pin_memory=True, shuffle=True) for task in raw_test_ds_list]
 
@@ -117,13 +122,13 @@ if __name__ == '__main__':
         batch_loss = 0
         for i in range(4):
             batch = next(iter(random.choice(train_loader_list)))
-            loss, acc = fast_adapt(model,
-                                   batch,
-                                   args.train_way,
-                                   args.shot,
-                                   args.train_query,
-                                   metric=pairwise_distances_logits,
-                                   device=device)
+            loss, acc = fast_adapt_train(model,
+                                         batch,
+                                         args.train_way,
+                                         args.shot,
+                                         args.train_query,
+                                         metric=pairwise_distances_logits,
+                                         device=device)
 
             loss_ctr += 1
             n_loss += loss.item()
@@ -153,7 +158,7 @@ if __name__ == '__main__':
                 n_loss = 0
                 n_acc = 0
                 for i, batch in enumerate(val_loader):
-                    loss, acc = fast_adaptv2(model,
+                    loss, acc = fast_adaptv3(model,
                                              batch,
                                              args.test_way,
                                              args.test_shot,
@@ -173,7 +178,7 @@ if __name__ == '__main__':
         loss_ctr = 0
         n_acc = 0
         for i, batch in enumerate(test_loader):
-            loss, acc = fast_adaptv2(model,
+            loss, acc = fast_adaptv3(model,
                                      batch,
                                      args.test_way,
                                      args.test_shot,

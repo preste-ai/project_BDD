@@ -153,7 +153,7 @@ class BDDDataset(Dataset):
         self.query = query
 
         # load dataset
-        self.x_0, self.y_0, self.x_1, self.y_1 = self.load_dataset_folder()
+        self.x_0, self.y_0, self.mask_0, self.x_1, self.y_1, self.mask_1 = self.load_dataset_folder()
         # print('self.y_0', len(self.y_0))
         # print('self.y_1', len(self.y_1))
         assert len(self.y_1) > self.shots + self.query
@@ -167,16 +167,21 @@ class BDDDataset(Dataset):
                                          T.ToTensor()])
 
     def __getitem__(self, idx):
-        batch_x, batch_y = [], []
+        batch_x, batch_y, batch_mask = [], [], []
 
         # defects
         for i in range((self.shots + self.query)):
-            x, y = self.x_1[idx * (self.shots + self.query) + i], self.y_1[idx * (self.shots + self.query) + i]
+            x, y, mask = self.x_1[idx * (self.shots + self.query) + i], self.y_1[idx * (self.shots + self.query) + i], \
+                         self.mask_1[idx * (self.shots + self.query) + i]
             x = Image.open(x).convert('RGB')
             x = self.transform_x(x)
 
+            mask = Image.open(mask)
+            mask = self.transform_mask(mask)
+
             batch_x.append(x)
             batch_y.append(y)
+            batch_mask.append(mask)
 
         # good
         for _ in range((self.shots + self.query)):
@@ -184,10 +189,12 @@ class BDDDataset(Dataset):
             x, y = self.x_0[rand_i], self.y_0[rand_i]
             x = Image.open(x).convert('RGB')
             x = self.transform_x(x)
+            mask = torch.zeros((1, self.resize[0], self.resize[1]))
             batch_x.append(x)
             batch_y.append(y)
+            batch_mask.append(mask)
 
-        return torch.stack(batch_x), torch.tensor(batch_y)
+        return torch.stack(batch_x), torch.tensor(batch_y), torch.stack(batch_mask)
 
     def __len__(self):
         return len(self.y_1) // (self.shots + self.query)
@@ -195,10 +202,12 @@ class BDDDataset(Dataset):
     def load_dataset_folder(self):
         # phase = 'train' if self.is_train else 'test'
         phase = 'test'  # if self.is_train else 'test'
-        x_0, x_1, y_0, y_1 = [], [], [], []
+        x_0, x_1, y_0, y_1, mask_0, mask_1 = [], [], [], [], [], []
 
         for class_name in self.class_names_list:
             img_dir = os.path.join(self.dataset_folder_path, class_name, phase)
+            gt_dir = os.path.join(self.dataset_folder_path, class_name, 'ground_truth')
+
             img_types = sorted(os.listdir(img_dir))
 
             for img_type in img_types:
@@ -215,14 +224,21 @@ class BDDDataset(Dataset):
                 if img_type == 'good':
                     x_0.extend(img_fpath_list)
                     y_0.extend([0] * len(img_fpath_list))
+                    mask_0.extend([None] * len(img_fpath_list))
                 else:
                     x_1.extend(img_fpath_list)
                     y_1.extend([1] * len(img_fpath_list))
+                    gt_type_dir = os.path.join(gt_dir, img_type)
+                    img_fname_list = [os.path.splitext(os.path.basename(f))[0] for f in img_fpath_list]
+                    gt_fpath_list = [os.path.join(gt_type_dir, img_fname + '_mask.png')
+                                     for img_fname in img_fname_list]
+                    mask_1.extend(gt_fpath_list)
 
         assert len(x_0) == len(y_0), 'number of x and y should be same'
         assert len(x_1) == len(y_1), 'number of x and y should be same'
-
-        return list(x_0), list(y_0), list(x_1), list(y_1)
+        assert len(x_1) == len(mask_1)
+        assert len(x_0) == len(mask_0)
+        return list(x_0), list(y_0), list(mask_0), list(x_1), list(y_1), list(mask_1)
 
 
 class BDDDatasetv2(Dataset):
