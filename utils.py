@@ -3,6 +3,7 @@ from learn2learn.data.transforms import NWays, KShots, LoadData, RemapLabels
 import torch
 import torch.nn.functional as F
 import numpy as np
+from loss import FocalLoss
 
 
 def pairwise_distances_logits(a, b):
@@ -49,7 +50,7 @@ def fast_adapt(model, batch, ways, shot, query_num, metric=None, device=None):
     labels = labels.squeeze(0)[sort.indices].squeeze(0)
 
     # Compute support and query embeddings
-    embeddings = model(data)
+    _, embeddings = model(data)
     support_indices = np.zeros(data.size(0), dtype=bool)
     selection = np.arange(ways) * (shot + query_num)
     for offset in range(shot):
@@ -99,3 +100,45 @@ def fast_adaptv2(model, batch, ways, shot, query_num, metric=None, device=None):
 
     acc = accuracy(logits, labels)
     return loss, acc
+
+
+def fast_adaptv3(model, batch, ways, shot, query_num, metric=None, device=None):
+    if metric is None:
+        metric = pairwise_distances_logits
+    if device is None:
+        device = model.device()
+    loss_focal = FocalLoss()
+
+    data, labels, mask, s_data, s_labels, s_mask = batch
+
+    data = data.to(device)
+    labels = labels.to(device)
+    mask = mask.to(device)
+    s_data = s_data.to(device)
+    s_labels = s_labels.to(device)
+    s_mask = s_mask.to(device)
+
+    data = data.squeeze(0)
+    labels = labels.squeeze(0)
+    mask = mask.squeeze(0)
+    s_data = s_data.squeeze(0)
+    s_labels = s_labels.squeeze(0)
+    s_mask = s_mask.squeeze(0)
+
+    # Compute support and query embeddings
+    support, support_f = model(s_data)
+    support = support_f.reshape(ways, shot, -1).mean(dim=1)
+    query, query_f = model(data)
+    labels = labels.long()
+
+    logits = pairwise_distances_logits(query_f, support_f)
+    loss = F.cross_entropy(logits, labels)
+    # loss = F.binary_cross_entropy(torch.tensor(torch.argmax(logits, dim=1), dtype=torch.float32, requires_grad=True), labels.float())
+
+    out_mask_sm = torch.softmax(support, dim=1)
+
+    segment_loss = loss_focal(out_mask_sm, s_mask)
+
+    acc = accuracy(logits, labels)
+
+    return loss + segment_loss, acc

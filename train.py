@@ -6,9 +6,10 @@ import torch
 from torch.utils.data import DataLoader
 import os
 from DRAEM.model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
-from models import ProtoNet
-from mvtec_dataset import MVTecDataset, BDDDatasetv2
-from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv2
+from models import ProtoNet, SegNetv3
+from mvtec_dataset import MVTecDataset, BDDDatasetv2, BDDDatasetv3
+from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv2, fast_adaptv3
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -20,13 +21,13 @@ if __name__ == '__main__':
     parser.add_argument('--test-way', type=int, default=2)
     parser.add_argument('--test-query', type=int, default=5)
 
-    parser.add_argument("--experiment-name", type=str, default='fewshot_learner_')
+    parser.add_argument("--experiment-name", type=str, default='fewshot_learner_seg_')
     parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--max-epoch', type=int, default=100)
+    parser.add_argument('--max-epoch', type=int, default=200)
     parser.add_argument('--random-seed', type=int, default=42)
     parser.add_argument('--base-width', type=int, default=32)
     parser.add_argument("--embeddings-path", type=str,
-                        default='DRAEM/checkpoints/DRAEM_train_0.0001_400_bs8_texture_w32c32.pckl')
+                        default='DRAEM/checkpoints/DRAEM_train_0.0001_400_bs16_texture_w32c32_v2.pckl')
     parser.add_argument("--checkpoint-path", type=str,
                         default='./checkpoints/')
 
@@ -51,9 +52,14 @@ if __name__ == '__main__':
     embeddings.load_state_dict(
         torch.load(args.embeddings_path, map_location='cpu'))
 
-    model = ProtoNet(embeddings.encoder, base_width=args.base_width)
+    discriminative_pretrained_model = DiscriminativeSubNetwork(in_channels=6, out_channels=2,
+                                                               base_channels=args.base_width)
+    discriminative_pretrained_model.load_state_dict(
+        torch.load("DRAEM/checkpoints/DRAEM_train_0.0001_400_bs16_texture_w32c32_v2_seg.pckl", map_location='cpu'))
+
+    model = SegNetv3(embeddings, discriminative_pretrained_model)
     # Freeze wrights
-    for name, param in model.encoder.named_parameters():
+    for name, param in model.reconstruct.named_parameters():
         param.requires_grad = False
 
     model.to(device)
@@ -68,7 +74,7 @@ if __name__ == '__main__':
     val_classes_names = ['bottle', 'cable']
     # val_classes_names = ['dagm_c3']
 
-    raw_val_ds_list = [BDDDatasetv2(root_path='data',
+    raw_val_ds_list = [BDDDatasetv3(root_path='data',
                                     bdd_folder_path='mvtech_cleaned',
                                     class_names_list=[class_n],
                                     is_train=False,
@@ -80,7 +86,7 @@ if __name__ == '__main__':
     test_classes_names = ['capsule', 'tile', 'leather']
     # test_classes_names = ['dagm_c5', 'dagm_c6']
     # test_classes_names = ['pill', 'tile', 'leather', 'dagm_c4', 'dagm_c6', 'kolectorsdd2_test']
-    raw_test_ds_list = [BDDDatasetv2(root_path='data',
+    raw_test_ds_list = [BDDDatasetv3(root_path='data',
                                      bdd_folder_path='mvtech_cleaned',
                                      class_names_list=[class_n],
                                      is_train=False,
@@ -99,7 +105,7 @@ if __name__ == '__main__':
     test_loader_list = [DataLoader(task, pin_memory=True, shuffle=True) for task in raw_test_ds_list]
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.8)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
 
     for epoch in range(1, args.max_epoch + 1):
 
@@ -109,7 +115,7 @@ if __name__ == '__main__':
         n_loss = 0
         n_acc = 0
         batch_loss = 0
-        for i in range(10):
+        for i in range(4):
             batch = next(iter(random.choice(train_loader_list)))
             loss, acc = fast_adapt(model,
                                    batch,

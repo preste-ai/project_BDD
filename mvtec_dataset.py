@@ -369,3 +369,180 @@ class BDDDatasetv2(Dataset):
         assert len(x_1) == len(y_1), 'number of x and y should be same'
 
         return list(x_0), list(y_0), list(x_1), list(y_1)
+
+
+class BDDDatasetv3(Dataset):
+    def __init__(self,
+                 root_path='../data',
+                 bdd_folder_path='mvtec',
+                 class_names_list=['bottle'],
+                 is_train=True,
+                 resize=256,
+                 cropsize=224,
+                 ways=2,
+                 shots=3,
+                 query=5):
+
+        for class_name in class_names_list:
+            assert class_name in CLASS_NAMES, 'class_name: {}, should be in {}'.format(class_name, CLASS_NAMES)
+
+        self.root_path = root_path
+        self.class_names_list = class_names_list
+        self.is_train = is_train
+        self.resize = resize
+        self.cropsize = cropsize
+        self.dataset_folder_path = os.path.join(root_path, bdd_folder_path)
+        self.ways = ways
+        self.shots = shots
+        self.query = query
+
+        # load dataset
+        # query data
+        self.x, self.y, self.mask = self.load_dataset_folder()
+        # support data
+        self.s_x_0, self.s_y_0, self.s_mask_0, self.s_x_1, self.s_y_1, self.s_mask_1 = self.load_support_folder()
+
+        assert len(self.y) >= self.query
+
+        assert len(self.s_y_1) >= self.shots // 2
+        assert len(self.s_y_0) >= self.shots // 2
+
+        # set transforms
+        self.transform_x = T.Compose([T.Resize(resize, Image.ANTIALIAS),
+                                      T.ToTensor()])
+        # T.Normalize(mean=[0.485, 0.456, 0.406],
+        #            std=[0.229, 0.224, 0.225])])
+        self.transform_mask = T.Compose([T.Resize(resize, Image.NEAREST),
+                                         T.ToTensor()])
+
+    def __getitem__(self, idx):
+        # query data
+        batch_x, batch_y, batch_mask = [], [], []
+        # support data
+        batch_s_x, batch_s_y, batch_s_mask = [], [], []
+
+        ## QUERY
+
+        for i in range(self.query * self.ways):
+            x, y, mask = self.x[idx * self.query * self.ways + i], self.y[idx * self.query * self.ways + i], self.mask[
+                idx * self.query * self.ways + i]
+            x = Image.open(x).convert('RGB')
+            x = self.transform_x(x)
+
+            if y == 0:
+                mask = torch.zeros((1, self.resize[0], self.resize[1]))
+            else:
+                mask = Image.open(mask)
+                mask = self.transform_mask(mask)
+            batch_x.append(x)
+            batch_y.append(y)
+            batch_mask.append(mask)
+
+        ## SUPPORT
+        # defects
+        for _ in range(self.shots):
+            rand_i = random.randint(0, len(self.s_y_1) - 1)
+            x, y, mask = self.s_x_1[rand_i], self.s_y_1[rand_i], self.s_mask_1[rand_i]
+            x = Image.open(x).convert('RGB')
+            x = self.transform_x(x)
+
+            mask = Image.open(mask)
+            mask = self.transform_mask(mask)
+
+            batch_s_x.append(x)
+            batch_s_y.append(y)
+            batch_s_mask.append(mask)
+
+        # good
+        for _ in range(self.shots):
+            rand_i = random.randint(0, len(self.s_y_0) - 1)
+            x, y = self.s_x_0[rand_i], self.s_y_0[rand_i]
+            x = Image.open(x).convert('RGB')
+            x = self.transform_x(x)
+            mask = torch.zeros((1, self.resize[0], self.resize[1]))
+            batch_s_x.append(x)
+            batch_s_y.append(y)
+            batch_s_mask.append(mask)
+
+        return torch.stack(batch_x), torch.tensor(batch_y), torch.stack(batch_mask), torch.stack(
+            batch_s_x), torch.tensor(batch_s_y), torch.stack(batch_s_mask)
+
+    def __len__(self):
+        return len(self.y) // (self.query * self.ways)
+
+    def load_dataset_folder(self, phase='test'):
+
+        x, y, mask = [], [], []
+
+        for class_name in self.class_names_list:
+            img_dir = os.path.join(self.dataset_folder_path, class_name, phase)
+            gt_dir = os.path.join(self.dataset_folder_path, class_name, 'ground_truth')
+
+            img_types = sorted(os.listdir(img_dir))
+
+            for img_type in img_types:
+
+                # load images
+                img_type_dir = os.path.join(img_dir, img_type)
+                if not os.path.isdir(img_type_dir):
+                    continue
+                img_fpath_list = sorted([os.path.join(img_type_dir, f)
+                                         for f in os.listdir(img_type_dir)
+                                         if f.endswith('.png')])
+
+                x.extend(img_fpath_list)
+                # load gt labels
+                if img_type == 'good':
+                    y.extend([0] * len(img_fpath_list))
+                    mask.extend([None] * len(img_fpath_list))
+                else:
+                    y.extend([1] * len(img_fpath_list))
+                    gt_type_dir = os.path.join(gt_dir, img_type)
+                    img_fname_list = [os.path.splitext(os.path.basename(f))[0] for f in img_fpath_list]
+                    gt_fpath_list = [os.path.join(gt_type_dir, img_fname + '_mask.png')
+                                     for img_fname in img_fname_list]
+                    mask.extend(gt_fpath_list)
+
+        assert len(x) == len(y)
+        assert len(x) == len(mask)
+        return list(x), list(y), list(mask)
+
+    def load_support_folder(self, phase='support_set'):
+
+        x_0, x_1, y_0, y_1, mask_0, mask_1 = [], [], [], [], [], []
+
+        for class_name in self.class_names_list:
+            img_dir = os.path.join(self.dataset_folder_path, class_name, phase)
+            gt_dir = os.path.join(self.dataset_folder_path, class_name, 'support_set', 'ground_truth')
+
+            img_types = sorted(os.listdir(img_dir))
+
+            for img_type in img_types:
+
+                # load images
+                img_type_dir = os.path.join(img_dir, img_type)
+                if not os.path.isdir(img_type_dir):
+                    continue
+                img_fpath_list = sorted([os.path.join(img_type_dir, f)
+                                         for f in os.listdir(img_type_dir)
+                                         if f.endswith('.png')])
+
+                # load gt labels
+                if img_type == 'good':
+                    x_0.extend(img_fpath_list)
+                    y_0.extend([0] * len(img_fpath_list))
+                    mask_0.extend([None] * len(img_fpath_list))
+                else:
+                    x_1.extend(img_fpath_list)
+                    y_1.extend([1] * len(img_fpath_list))
+                    gt_type_dir = os.path.join(gt_dir, img_type)
+                    img_fname_list = [os.path.splitext(os.path.basename(f))[0] for f in img_fpath_list]
+                    gt_fpath_list = [os.path.join(gt_type_dir, img_fname + '_mask.png')
+                                     for img_fname in img_fname_list]
+                    mask_1.extend(gt_fpath_list)
+
+        assert len(x_0) == len(y_0), 'number of x and y should be same'
+        assert len(x_1) == len(y_1), 'number of x and y should be same'
+        assert len(x_1) == len(mask_1)
+        assert len(x_0) == len(mask_0)
+        return list(x_0), list(y_0), list(mask_0), list(x_1), list(y_1), list(mask_1)

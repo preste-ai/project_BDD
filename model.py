@@ -80,5 +80,34 @@ class ProtoNetv2(nn.Module):
         e = self.encoder(x)
         joined_in = torch.cat((e, x), dim=1)
         m = self.seg(joined_in)
-        o = self.classifier(m)
-        return o
+        #o = self.classifier(m)
+        m = m[:, 1:, :, :]
+        return m
+
+
+class SegNet(nn.Module):
+    def __init__(self, reconstruct, seg):
+        super(SegNet, self).__init__()
+        self.reconstruct = reconstruct
+        self.seg = seg
+
+    def forward(self, x):
+        r = self.reconstruct(x)
+        joined_in = torch.cat((r, x), dim=1)
+        m = self.seg(joined_in)
+        m_f = m[:,1:,:,:]
+        return m_f.view(m_f.size(0), -1)
+
+
+class SegNetv3(nn.Module):
+    def __init__(self, reconstruct, seg):
+        super(SegNet, self).__init__()
+        self.reconstruct = reconstruct
+        self.seg = seg
+
+    def forward(self, x):
+        r = self.reconstruct(x)
+        joined_in = torch.cat((r, x), dim=1)
+        m = self.seg(joined_in)
+        m_f = m[:,1:,:,:]
+        return m, m_f.view(m_f.size(0), -1)
