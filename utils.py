@@ -49,7 +49,7 @@ def fast_adapt(model, batch, ways, shot, query_num, metric=None, device=None):
     labels = labels.squeeze(0)[sort.indices].squeeze(0)
 
     # Compute support and query embeddings
-    embeddings = model(data)
+    embeddings = model(data)  #forward is called here
     support_indices = np.zeros(data.size(0), dtype=bool)
     selection = np.arange(ways) * (shot + query_num)
     for offset in range(shot):
@@ -57,7 +57,7 @@ def fast_adapt(model, batch, ways, shot, query_num, metric=None, device=None):
     query_indices = torch.from_numpy(~support_indices)
     support_indices = torch.from_numpy(support_indices)
     support = embeddings[support_indices]
-    support = support.reshape(ways, shot, -1).mean(dim=1)
+    support = support.reshape(ways, shot, -1).mean(dim=1) #усереднений ембендінг по класах (2, 256)
     query = embeddings[query_indices]
     labels = labels[query_indices].long()
 
@@ -67,6 +67,7 @@ def fast_adapt(model, batch, ways, shot, query_num, metric=None, device=None):
     # loss = F.binary_cross_entropy(torch.tensor(torch.argmax(logits, dim=1), dtype=torch.float32, requires_grad=True), labels.float())
 
     acc = accuracy(logits, labels)
+    torch.cuda.empty_cache()
     return loss, acc
 
 

@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 import os
 from DRAEM.model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
-from models import ProtoNet
+from model import ProtoNet, ProtoNetv3
 from mvtec_dataset import MVTecDataset, BDDDatasetv2
 from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv2
 
@@ -26,13 +26,13 @@ if __name__ == '__main__':
     parser.add_argument('--random-seed', type=int, default=42)
     parser.add_argument('--base-width', type=int, default=32)
     parser.add_argument("--embeddings-path", type=str,
-                        default='DRAEM/checkpoints/DRAEM_train_0.0001_400_bs8_texture_w32c32.pckl')
+                        default='DRAEM/checkpoints/DRAEM_train_0.0001_400_bs16_texture_w32c32_v2.pckl')
     parser.add_argument("--checkpoint-path", type=str,
                         default='./checkpoints/')
 
     parser.add_argument('--checkpoint-save-freq', type=int, default=25)
 
-    parser.add_argument('--gpu', default=0)
+    parser.add_argument('--gpu', default=1)
 
     args = parser.parse_args()
     print(args)
@@ -40,21 +40,27 @@ if __name__ == '__main__':
 
     random.seed(args.random_seed)
 
-    device = torch.device('cpu')
+    device = torch.device('cuda')
     if args.gpu and torch.cuda.device_count():
         print("Using gpu")
         torch.cuda.manual_seed(args.random_seed)
         device = torch.device('cuda')
 
     # Create model
-    embeddings = ReconstructiveSubNetwork(in_channels=3, out_channels=3, base_width=args.base_width)
-    embeddings.load_state_dict(
-        torch.load(args.embeddings_path, map_location='cpu'))
+    #embeddings = ReconstructiveSubNetwork(in_channels=3, out_channels=3, base_width=args.base_width)
+    #embeddings.load_state_dict(
+    #    torch.load(args.embeddings_path, map_location='cuda'))
 
-    model = ProtoNet(embeddings.encoder, base_width=args.base_width)
+    #model = ProtoNet(embeddings.encoder, base_width=args.base_width)
+
+    # RESNET 18
+
+    model = ProtoNetv3(base_width=args.base_width)
+    print(model)
+
     # Freeze wrights
-    for name, param in model.encoder.named_parameters():
-        param.requires_grad = False
+    #for name, param in model.encoder.named_parameters():
+    #    param.requires_grad = False
 
     model.to(device)
     train_classes_names = ['wood', 'pill', 'carpet', 'grid', 'hazelnut', 'zipper']
@@ -102,15 +108,15 @@ if __name__ == '__main__':
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.8)
 
     for epoch in range(1, args.max_epoch + 1):
-
+        torch.cuda.empty_cache()
         model.train()
 
         loss_ctr = 0
         n_loss = 0
         n_acc = 0
         batch_loss = 0
-        for i in range(10):
-            batch = next(iter(random.choice(train_loader_list)))
+        for i in range(4):
+            batch = next(iter(random.choice(train_loader_list))) # support set, support labels, query set
             loss, acc = fast_adapt(model,
                                    batch,
                                    args.train_way,
@@ -118,6 +124,7 @@ if __name__ == '__main__':
                                    args.train_query,
                                    metric=pairwise_distances_logits,
                                    device=device)
+            print(f'{i}th run')
 
             loss_ctr += 1
             n_loss += loss.item()
@@ -125,7 +132,7 @@ if __name__ == '__main__':
             n_acc += acc
         batch_loss = batch_loss / loss_ctr
         optimizer.zero_grad()
-        batch_loss.backward()
+        batch_loss.backward() #backpropagation
         optimizer.step()
 
         lr_scheduler.step()
@@ -161,6 +168,8 @@ if __name__ == '__main__':
 
                 print('CLASS {}: epoch {}, val, loss={:.4f} acc={:.4f}'.format(
                     val_classes_names[v_i], epoch, n_loss / loss_ctr, n_acc / loss_ctr))
+
+
 
     model.eval()
     for c_i, test_loader in enumerate(test_loader_list):

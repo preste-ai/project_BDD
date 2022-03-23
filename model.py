@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import learn2learn as l2l
 from collections import OrderedDict
+from torchvision.models import resnet18
 
 
 class Convnet(nn.Module):
@@ -42,10 +43,10 @@ class ProtoNet(nn.Module):
             ])
         )
 
-    def forward(self, x):
+    def forward(self, x):  # x - image
         x = self.encoder(x)
         x = self.classifier(x)
-        return x.view(x.size(0), -1)
+        return x.view(x.size(0), -1) # flatten
 
 
 class ProtoNetv2(nn.Module):
@@ -82,3 +83,51 @@ class ProtoNetv2(nn.Module):
         m = self.seg(joined_in)
         o = self.classifier(m)
         return o
+
+
+class ProtoForRes18(nn.Module):
+    def __init__(self, backbone: nn.Module):
+        super(ProtoForRes18, self).__init__()
+        self.backbone = backbone
+
+    def forward(
+            self,
+            support_images: torch.Tensor,
+            support_labels: torch.Tensor,
+            query_images: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Predict query labels using labeled support images.
+        """
+        # Extract the features of support and query images
+        z_support = self.backbone.forward(support_images)
+        z_query = self.backbone.forward(query_images)
+
+        # Infer the number of different classes from the labels of the support set
+        n_way = len(torch.unique(support_labels))
+        # Prototype i is the mean of all instances of features corresponding to labels == i
+        z_proto = torch.cat(
+            [
+                z_support[torch.nonzero(support_labels == label)].mean(0)
+                for label in range(n_way)
+            ]
+        )
+
+        # Compute the euclidean distance from queries to prototypes
+        dists = torch.cdist(z_query, z_proto)
+
+        # And here is the super complicated operation to transform those distances into classification scores!
+        scores = -dists
+        return scores
+
+
+class ProtoNetv3(nn.Module):
+    def __init__(self, encoder=resnet18(pretrained=True), base_width=32):
+        super(ProtoNetv3, self).__init__()
+        self.encoder = encoder
+        self.encoder.fc = nn.Linear(512, 1)
+
+    def forward(self, x):  # x - image
+        x = self.encoder(x)
+        #x = self.classifier(x)
+        return x.view(x.size(0), -1) # flatten
