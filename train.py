@@ -8,7 +8,7 @@ import os
 from DRAEM.model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
 from models import ProtoNet, SegNetv3
 from mvtec_dataset import BDDDataset, BDDDatasetv3
-from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv3, fast_adapt_train
+from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv3, fast_adapt_train, fast_adaptv3_t
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -22,7 +22,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--experiment-name", type=str, default='fewshot_learner_seg_')
     parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--max-epoch', type=int, default=200)
+    parser.add_argument('--max-epoch', type=int, default=20)
     parser.add_argument('--random-seed', type=int, default=42)
     parser.add_argument('--base-width', type=int, default=32)
     parser.add_argument("--embeddings-path", type=str,
@@ -147,7 +147,7 @@ if __name__ == '__main__':
         if (epoch) % args.checkpoint_save_freq == 0:
             torch.save(model.state_dict(), os.path.join(args.checkpoint_path, run_name + str(epoch) + ".pckl"))
 
-        if (epoch) % 10 == 0:
+        if (epoch) % 1 == 0:
             model.eval()
 
             # loss_ctr = 0
@@ -158,7 +158,7 @@ if __name__ == '__main__':
                 n_loss = 0
                 n_acc = 0
                 for i, batch in enumerate(val_loader):
-                    loss, acc = fast_adaptv3(model,
+                    loss, acc = fast_adaptv3_t(model,
                                              batch,
                                              args.test_way,
                                              args.test_shot,
@@ -178,7 +178,7 @@ if __name__ == '__main__':
         loss_ctr = 0
         n_acc = 0
         for i, batch in enumerate(test_loader):
-            loss, acc = fast_adaptv3(model,
+            loss, acc = fast_adaptv3_t(model,
                                      batch,
                                      args.test_way,
                                      args.test_shot,
