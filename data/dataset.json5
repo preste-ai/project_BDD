@@ -1,0 +1,90 @@
+{
+  'capsule': [
+    'crack',
+    'faulty_imprint',
+    'poke',
+    'squeeze',
+    'scratch'
+  ],
+  'Class4': ['def'],
+  'grid': [
+    'metal_contamination',
+    'broken',
+    'bent',
+    'thread'
+  ],
+  'Class2': ['def'],
+  'leather': [
+    'fold',
+    'glue',
+    'poke',
+    'cut'
+  ],
+  'hazelnut': [
+    'crack',
+    'hole',
+    'print',
+    'cut'
+  ],
+  'bottle': [
+    'broken_large',
+    'broken_small'
+  ],
+  'zipper': [
+    'combined',
+    'squeezed_teeth',
+    'rough',
+    'broken_teeth',
+    'fabric_border',
+    'split_teeth'
+  ],
+  'carpet': [
+    'color',
+    'metal_contamination',
+    'hole',
+    'cut',
+    'thread'
+  ],
+  'wood': [
+    'combined',
+    'color',
+    'scratch',
+    'hole'
+  ],
+  'pill': [
+    'pill_type',
+    'combined',
+    'crack',
+    'faulty_imprint',
+    'color',
+    'scratch',
+    'contamination'
+  ],
+  'Class5': ['def'],
+  'cable': [
+    'combined',
+    'poke_insulation',
+    'bent_wire',
+    'cut_inner_insulation',
+    'missing_cable',
+    'missing_wire',
+    'cut_outer_insulation',
+    'cable_swap'
+  ],
+  'metal_nut': [
+    'scratch',
+    'bent'
+  ],
+  'Class3': ['def'],
+  'tile': [
+    'glue_strip',
+    'crack',
+    'rough',
+    'gray_stroke'
+  ],
+  'Class6': ['def'],
+  'Class7': ['def'],
+  'Class8': ['def'],
+  'Class9': ['def'],
+  'Class10': ['def']
+}
