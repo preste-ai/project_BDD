@@ -8,21 +8,23 @@ import os
 from DRAEM.model_unet import ReconstructiveSubNetwork, DiscriminativeSubNetwork
 from model import ProtoNet, ProtoNetv3
 from mvtec_dataset import MVTecDataset, BDDDatasetv2
-from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv2
+from utils import prepare_task_sets, pairwise_distances_logits, fast_adapt, fast_adaptv2, write_training_history, plot_training_history
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--shot', type=int, default=10)
+    parser.add_argument('--shot', type=int, default=5)
     parser.add_argument('--train-way', type=int, default=2)
-    parser.add_argument('--train-query', type=int, default=5)
+    parser.add_argument('--train-query', type=int, default=3)
 
-    parser.add_argument('--test-shot', type=int, default=10)
+    parser.add_argument('--test-shot', type=int, default=5)
     parser.add_argument('--test-way', type=int, default=2)
-    parser.add_argument('--test-query', type=int, default=5)
+    parser.add_argument('--test-query', type=int, default=3)
 
     parser.add_argument("--experiment-name", type=str, default='fewshot_learner_')
     parser.add_argument('--lr', type=float, default=0.001)
-    parser.add_argument('--max-epoch', type=int, default=100)
+    parser.add_argument('--max-epoch', type=int, default=2)
     parser.add_argument('--random-seed', type=int, default=42)
     parser.add_argument('--base-width', type=int, default=32)
     parser.add_argument("--embeddings-path", type=str,
@@ -33,6 +35,8 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint-save-freq', type=int, default=25)
 
     parser.add_argument('--gpu', default=1)
+
+    parser.add_argument('--training-history', type=bool, default=True)
 
     args = parser.parse_args()
     print(args)
@@ -47,20 +51,21 @@ if __name__ == '__main__':
         device = torch.device('cuda')
 
     # Create model
-    #embeddings = ReconstructiveSubNetwork(in_channels=3, out_channels=3, base_width=args.base_width)
-    #embeddings.load_state_dict(
+    # embeddings = ReconstructiveSubNetwork(in_channels=3, out_channels=3, base_width=args.base_width)
+    # embeddings.load_state_dict(
     #    torch.load(args.embeddings_path, map_location='cuda'))
 
-    #model = ProtoNet(embeddings.encoder, base_width=args.base_width)
+    # model = ProtoNet(embeddings.encoder, base_width=args.base_width)
 
     # RESNET 18
 
     model = ProtoNetv3(base_width=args.base_width)
     print(model)
 
-    # Freeze wrights
-    #for name, param in model.encoder.named_parameters():
-    #    param.requires_grad = False
+    #Freeze wrights
+    for name, param in model.encoder.named_parameters():
+        if not 'fc' in name:
+            param.requires_grad = False
 
     model.to(device)
     train_classes_names = ['wood', 'pill', 'carpet', 'grid', 'hazelnut', 'zipper']
@@ -107,6 +112,9 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.8)
 
+    if args.training_history:
+        training_history, validation_history = {}, {}
+
     for epoch in range(1, args.max_epoch + 1):
         torch.cuda.empty_cache()
         model.train()
@@ -115,8 +123,8 @@ if __name__ == '__main__':
         n_loss = 0
         n_acc = 0
         batch_loss = 0
-        for i in range(4):
-            batch = next(iter(random.choice(train_loader_list))) # support set, support labels, query set
+        for i in range(8):
+            batch = next(iter(random.choice(train_loader_list)))  # support set, support labels, query set
             loss, acc = fast_adapt(model,
                                    batch,
                                    args.train_way,
@@ -124,7 +132,7 @@ if __name__ == '__main__':
                                    args.train_query,
                                    metric=pairwise_distances_logits,
                                    device=device)
-            print(f'{i}th run')
+            #print(f'{i}th run')
 
             loss_ctr += 1
             n_loss += loss.item()
@@ -132,10 +140,13 @@ if __name__ == '__main__':
             n_acc += acc
         batch_loss = batch_loss / loss_ctr
         optimizer.zero_grad()
-        batch_loss.backward() #backpropagation
+        batch_loss.backward()  # backpropagation
         optimizer.step()
-
         lr_scheduler.step()
+
+        if args.training_history:
+            write_training_history(epoch, n_loss, loss_ctr, n_acc, val_class_name=None, history=training_history, mode='train')
+
 
         print('epoch {}, train, loss={:.4f} acc={:.4f}'.format(
             epoch, n_loss / loss_ctr, n_acc / loss_ctr))
@@ -166,10 +177,19 @@ if __name__ == '__main__':
                     n_loss += loss.item()
                     n_acc += acc
 
+                if args.training_history:
+                    write_training_history(epoch, n_loss, loss_ctr, n_acc,
+                                           history=validation_history, mode='val', val_class_name=val_classes_names[v_i])
+
                 print('CLASS {}: epoch {}, val, loss={:.4f} acc={:.4f}'.format(
                     val_classes_names[v_i], epoch, n_loss / loss_ctr, n_acc / loss_ctr))
 
+    print(training_history)
+    print(validation_history)
 
+    if args.training_history:
+        plot_training_history(training_history, shot=args.shot, way=args.train_way, mode='train')
+        plot_training_history(validation_history, shot=args.shot, way=args.train_way, mode='val')
 
     model.eval()
     for c_i, test_loader in enumerate(test_loader_list):
@@ -186,5 +206,5 @@ if __name__ == '__main__':
             loss_ctr += 1
             n_acc += acc
 
-        print('CLASS {}: {}: {:.2f}({:.2f})'.format(
-            test_classes_names[c_i], i, n_acc / loss_ctr * 100, acc * 100))
+            print('CLASS {}: {}: {:.2f}({:.2f})'.format(
+                test_classes_names[c_i], i, n_acc / loss_ctr * 100, acc * 100))

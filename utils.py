@@ -3,6 +3,8 @@ from learn2learn.data.transforms import NWays, KShots, LoadData, RemapLabels
 import torch
 import torch.nn.functional as F
 import numpy as np
+import matplotlib.pyplot as plt
+import os
 
 
 def pairwise_distances_logits(a, b):
@@ -49,7 +51,7 @@ def fast_adapt(model, batch, ways, shot, query_num, metric=None, device=None):
     labels = labels.squeeze(0)[sort.indices].squeeze(0)
 
     # Compute support and query embeddings
-    embeddings = model(data)  #forward is called here
+    embeddings = model(data)  # forward is called here
     support_indices = np.zeros(data.size(0), dtype=bool)
     selection = np.arange(ways) * (shot + query_num)
     for offset in range(shot):
@@ -57,7 +59,7 @@ def fast_adapt(model, batch, ways, shot, query_num, metric=None, device=None):
     query_indices = torch.from_numpy(~support_indices)
     support_indices = torch.from_numpy(support_indices)
     support = embeddings[support_indices]
-    support = support.reshape(ways, shot, -1).mean(dim=1) #усереднений ембендінг по класах (2, 256)
+    support = support.reshape(ways, shot, -1).mean(dim=1)  # усереднений ембендінг по класах (2, 256)
     query = embeddings[query_indices]
     labels = labels[query_indices].long()
 
@@ -100,3 +102,75 @@ def fast_adaptv2(model, batch, ways, shot, query_num, metric=None, device=None):
 
     acc = accuracy(logits, labels)
     return loss, acc
+
+# ToDo visualize batch
+def display_batch(batch):
+    data, labels = batch
+
+    for idx, label in zip(range(list(labels.shape)[0]), labels):
+        print(idx, label)
+
+def save_history(history, epoch, n_loss, n_acc, loss_ctr, mode):
+    if epoch == 1:
+        history['Epoch'] = [epoch]
+        history['Loss'] = [n_loss / loss_ctr]
+        history['Accuracy'] = [(n_acc / loss_ctr).item()]
+    elif epoch == 10 and mode == 'val':
+        history['Epoch'] = [epoch]
+        history['Loss'] = [n_loss / loss_ctr]
+        history['Accuracy'] = [(n_acc / loss_ctr).item()]
+    else:
+        history['Epoch'].append(epoch)
+        history['Loss'].append(n_loss / loss_ctr)
+        history['Accuracy'].append((n_acc / loss_ctr).item())
+
+def write_training_history(epoch, n_loss, loss_ctr, n_acc, history, val_class_name, mode = 'train'):
+    """
+        Set mode either to 'train' or 'val'
+    """
+
+    if not os.path.exists('checkpoints/learning_curves'): os.makedirs('checkpoints/learning_curves', exist_ok=True)
+
+    if mode == 'val':
+        if f'{val_class_name}'not in history:
+            history[f'{val_class_name}'] = {}
+        save_history(history[f'{val_class_name}'], epoch, n_loss, n_acc, loss_ctr, mode=mode)
+    elif mode == 'train':
+        save_history(history, epoch, n_loss, n_acc, loss_ctr, mode=mode)
+
+
+
+def get_cmap(n, name='hsv'):
+    '''Returns a function that maps each index in 0, 1, ..., n-1 to a distinct
+    RGB color; the keyword argument name must be a standard mpl colormap name.'''
+    return plt.cm.get_cmap(name, n)
+
+def plot_training_history(training_history, shot, way, mode):
+
+    """
+    Set mode either to 'train' or 'val'
+    """
+    if mode == 'train':
+        plt.figure()
+        plt.title(f'{shot}-shot {way}-way learning curve')
+        plt.plot(training_history['Epoch'], training_history['Loss'], color='blue', label='loss')
+        plt.plot(training_history['Epoch'], training_history['Accuracy'], color='green', label='accuracy')
+        plt.xlabel('Epoch')
+        plt.legend()
+        plt.savefig(f"checkpoints/learning_curves/train_history_{shot}shot{way}way_{len(training_history['Epoch'])}ep.jpg")
+        print('learning curve saved')
+    elif mode == 'val' and len(training_history) > 0:
+        plt.figure()
+        plt.title(f'{shot}-shot {way}-way learning curve')
+        anyclass = ''
+        cmap = get_cmap(len(training_history))
+        for idx, clas, history in enumerate(training_history.items()):
+            anyclass = clas
+            plt.plot(training_history[clas]['Epoch'], training_history[clas]['Loss'], color=cmap(idx), label=f'loss_{clas}')
+            plt.plot(training_history[clas]['Epoch'], training_history[clas]['Accuracy'], color=(idx), label=f'accuracy_{clas}', linestyle='--')
+        plt.xlabel('Epoch')
+        plt.legend()
+        plt.savefig(
+            f"checkpoints/learning_curves/validation_history_{shot}shot{way}way_{len(training_history[anyclass]['Epoch'])}ep.jpg")
+        print('validation curve saved')
+
